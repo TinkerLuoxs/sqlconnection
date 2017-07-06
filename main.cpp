@@ -1,7 +1,7 @@
 #include <iostream>
 #include <map>
-#include "sqlconnection.hpp"
-#include "sqlassign.hpp"
+#include "sql/sqlconnection.hpp"
+#include "sql/sqlassign.hpp"
 
 
 #define DB_SQLITE       1
@@ -99,20 +99,20 @@ int main()
     /// exec select.
     std::vector<t_weather> weathers;
     db_conn->execute("SELECT city, temp_lo, temp_hi, prcp, date FROM weather",
-        [&weathers](auto c, auto v)
+        [&weathers](auto values, auto lengths)
     {
         t_weather w = {};
-        sql::assign(c, v, w.city, w.temp_lo, w.temp_hi, w.prcp, w.date);
+        sql::assign(values, lengths, w.city, w.temp_lo, w.temp_hi, w.prcp, w.date);
         weathers.push_back(std::move(w));
     });
 
     db_conn->execute("INSERT INTO city (name) VALUES('Beijing'), ('Shanghai'), ('Guangzhou')");
     std::map<long long, t_city> citys;
     db_conn->execute("SELECT id, name FROM city",
-        [&citys](auto c, auto v)
+        [&citys](auto values, auto lengths)
     {
         t_city city = {};
-        sql::assign(c, v, city.id, city.name);
+        sql::assign(values, lengths, city.id, city.name);
         citys.emplace(city.id, std::move(city));
     });
 

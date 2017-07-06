@@ -12,14 +12,14 @@ namespace sql
     public:
         explicit db_pgsql(std::string const& conninfo)
         {
-            _handler = PQconnectdb(conninfo.c_str());
-            if (CONNECTION_OK == PQstatus(_handler))
+            _db = PQconnectdb(conninfo.c_str());
+            if (CONNECTION_OK == PQstatus(_db))
                 _connected = true;
         }
 
         ~db_pgsql()
         {
-            PQfinish(_handler);
+            PQfinish(_db);
         }
 
         bool is_connected()
@@ -29,7 +29,7 @@ namespace sql
 
         bool execute(std::string const& sql_str)
         {
-            auto res = PQexec(_handler, sql_str.data());
+            auto res = PQexec(_db, sql_str.data());
             SQLDEBUG("%s\n", PQresultErrorMessage(res));
             bool result = PGRES_COMMAND_OK == PQresultStatus(res);
             PQclear(res);
@@ -38,16 +38,17 @@ namespace sql
 
         bool execute(std::string const& sql_str, execute_handler&& handler)
         {
-            auto res = PQexec(_handler, sql_str.data());
+            auto res = PQexec(_db, sql_str.data());
             SQLDEBUG("%s\n", PQresultErrorMessage(res));
             bool result = fetch_result(std::move(handler), res);
             PQclear(res);
             return result;
         }
 
+        // SELECT * FROM mytable WHERE x = $1::bigint;
         bool prepare(std::string const& pre_str)
         {
-            auto res = PQprepare(_handler, "", pre_str.data(), 0, NULL);
+            auto res = PQprepare(_db, "", pre_str.data(), 0, NULL);
             SQLDEBUG("%s\n", PQresultErrorMessage(res));
             bool result = PGRES_COMMAND_OK == PQresultStatus(res);
             PQclear(res);
@@ -56,7 +57,7 @@ namespace sql
 
         bool execute_prepared()
         {
-            auto res = PQexecPrepared(_handler, "", 0, NULL, NULL, NULL, 0);
+            auto res = PQexecPrepared(_db, "", 0, NULL, NULL, NULL, 0);
             SQLDEBUG("%s\n", PQresultErrorMessage(res));
             bool result = PGRES_COMMAND_OK == PQresultStatus(res);
             PQclear(res);
@@ -67,9 +68,9 @@ namespace sql
         bool execute_prepared(Arg&... arg)
         {
             constexpr int num_args = sizeof...(arg);
-            param_bind param(num_args);
-            converts_value<0>(&param, arg...);
-            auto res = PQexecPrepared(_handler, "", num_args, &param.value[0], NULL, NULL, 0);
+            BindParam param(num_args);
+            param_bind<0>(&param, arg...);
+            auto res = PQexecPrepared(_db, "", num_args, &param.values[0], &param.lengths[0], &param.formats[0], 0);
             SQLDEBUG("%s\n", PQresultErrorMessage(res));
             bool result = PGRES_COMMAND_OK == PQresultStatus(res);
             PQclear(res);
@@ -78,7 +79,7 @@ namespace sql
 
         bool execute_prepared(execute_handler&& handler)
         {
-            auto res = PQexecPrepared(_handler, "", 0, NULL, NULL, NULL, 0);
+            auto res = PQexecPrepared(_db, "", 0, NULL, NULL, NULL, 0);
             SQLDEBUG("%s\n", PQresultErrorMessage(res));
             auto result = fetch_result(std::move(handler), res);
             PQclear(res);
@@ -89,9 +90,9 @@ namespace sql
         bool execute_prepared(execute_handler&& handler, Arg&... arg)
         {
             constexpr int num_args = sizeof...(arg);
-            param_bind param(num_args);
-            converts_value<0>(&param, arg...);
-            auto res = PQexecPrepared(_handler, "", num_args, &param.value[0], NULL, NULL, 0);
+            BindParam param(num_args);
+            param_bind<0>(&param, arg...);
+            auto res = PQexecPrepared(_db, "", num_args, &param.values[0], &param.lengths[0], &param.formats[0], 0);
             SQLDEBUG("%s\n", PQresultErrorMessage(res));
             bool result = fetch_result(std::move(handler), res);
             PQclear(res);
@@ -105,44 +106,56 @@ namespace sql
         }
 
     private:
-        struct param_bind
+        struct BindParam
         {
-            std::vector<const char *> value;
-            std::vector<std::string> type;
-            param_bind(size_t num) : value(num, nullptr), type(num) {}
+            std::vector<const char *> values;
+            std::vector<int> lengths;
+            std::vector<int> formats;
+            std::vector<std::string> cache_values;
+            BindParam(int num) : values(num, nullptr), lengths(num, 0), formats(num, 0)
+            {
+                cache_values.reserve(num);
+            }
         };
 
         template <typename T, typename = std::enable_if_t<std::is_arithmetic<T>::value>>
-        int converts(param_bind *param, T& item, size_t I)
+        int converts(BindParam *param, const T& item, size_t I)
         {
-            auto& val = param->type[I];
-            val = std::to_string(item);
-            param->value[I] = val.data();
+            param->cache_values.emplace_back(std::to_string(item));
+            param->values[I] = param->cache_values.back().data();
             return 0;
         }
 
-        int converts(param_bind *param, nullptr_t& , size_t I)
+        int converts(BindParam *param, const nullptr_t& , size_t I)
         {
-            param->value[I] = nullptr;
+            param->values[I] = nullptr;
             return 0;
         }
 
-        int converts(param_bind *param, std::string& arg, size_t I)
+        int converts(BindParam *param, const std::string& item, size_t I)
         {
-            param->value[I] = arg.data();
+            param->values[I] = item.data();
+            return 0;
+        }
+
+        int converts(BindParam *param, const blob_t& item, size_t I)
+        {
+            param->value[I] = item.data();
+            param->lengths[I] = item.size();
+            param->formats[I] = 1;
             return 0;
         }
 
         template<size_t I, typename Arg, typename... Args>
-        int converts_value(param_bind *param, Arg& arg, Args&... args)
+        int param_bind(BindParam *param, Arg& arg, Args&... args)
         {
             if (converts(param, arg, I))
                 return -1;
-            return converts_value<I + 1>(param, args...);
+            return param_bind<I + 1>(param, args...);
         }
 
         template<size_t I>
-        int converts_value(param_bind *param)
+        int param_bind(BindParam *param)
         {
             return 0;
         }
@@ -154,21 +167,24 @@ namespace sql
 
             auto num_rows = PQntuples(res);
             auto num_cols = PQnfields(res);
-            std::vector<char *> v(num_cols, nullptr);
+            std::vector<char *> values(num_cols, nullptr);
+            std::vector<unsigned long> lengths(num_cols, 0);
 
             int i = 0, j = 0;
             for (i = 0; i < num_rows; ++i)
             {
                 for (j = 0; j < num_cols; ++j)
-                    v[j] = PQgetisnull(res, i, j) ? nullptr : PQgetvalue(res, i, j);
-                        
-                handler(num_cols, &v[0]);
+                {
+                    values[j] = PQgetisnull(res, i, j) ? nullptr : PQgetvalue(res, i, j);
+                    lengths[j] = PQgetlength(res, i, j);
+                }
+
+                handler(&values[0], &lengths[0]);
             }
             return true;
         }
 
-
-        PGconn *_handler = nullptr;
+        PGconn *_db = nullptr;
         bool _connected = false;
     };
 

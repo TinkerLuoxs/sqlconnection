@@ -5,7 +5,6 @@
 
 #include <atomic>
 #include "mysql.h"
-#include "sqldb_mysql_resultset.hpp"
 
 namespace sql
 {
@@ -28,14 +27,14 @@ namespace sql
             if (++sql_use_count <= 1)
                 mysql_library_init(0, nullptr, nullptr);
 
-            _handler = mysql_init(nullptr);
+            _db = mysql_init(nullptr);
             set_options();
             launch_connect(conninfo);
         }
 
         ~db_mysql()
         {
-            mysql_close(_handler);
+            mysql_close(_db);
 
             if (--sql_use_count <= 0)
                 mysql_library_end();
@@ -48,8 +47,8 @@ namespace sql
 
         bool execute(std::string const& sql_str)
         {
-            bool result = !mysql_real_query(_handler, sql_str.data(), sql_str.size());
-            SQLDEBUG("%s\n", mysql_error(_handler));
+            bool result = !mysql_real_query(_db, sql_str.data(), sql_str.size());
+            SQLDEBUG("%s\n", mysql_error(_db));
             return result;
         }
 
@@ -57,20 +56,21 @@ namespace sql
         {
             if (!execute(sql_str))
                 return false;
-            auto result = mysql_store_result(_handler);
-            SQLDEBUG("%s\n", mysql_error(_handler));
+            auto result = mysql_store_result(_db);
+            SQLDEBUG("%s\n", mysql_error(_db));
             if (!result) return false;
             auto num_fields = mysql_num_fields(result);
             MYSQL_ROW row;
             while ((row = mysql_fetch_row(result)))
-                handler(num_fields, row);
+                handler(row, mysql_fetch_lengths(result));
+
             mysql_free_result(result);
             return true;
         }
 
         bool prepare(std::string const& pre_str)
         {
-            _stmt = mysql_stmt_init(_handler);
+            _stmt = mysql_stmt_init(_db);
             return !mysql_stmt_prepare(_stmt, pre_str.data(), pre_str.size());
         }
 
@@ -118,13 +118,13 @@ namespace sql
                 if (!meta_result)
                     break;
 
-                my::resultset resl(num_cols);
+                resultset resl(num_cols);
                 resl.set_bind(meta_result);
 
                 if (!mysql_stmt_bind_result(_stmt, resl.get_bind()))
                 {
                     while (!mysql_stmt_fetch(_stmt))
-                        handler(num_cols, resl.get_value());
+                        handler(resl.get_value(), resl.get_length());
                     result = true;
                 }
                 mysql_free_result(meta_result);
@@ -161,10 +161,24 @@ namespace sql
             return 0;
         }
 
+        int in_bind(MYSQL_BIND *bnd, unsigned char const& item, size_t I)
+        {
+            bnd[I].buffer_type = MYSQL_TYPE_TINY;
+            bnd[I].buffer = const_cast<unsigned char *>(&item);
+            return 0;
+        }
+
         int in_bind(MYSQL_BIND *bnd, short const& item, size_t I)
         {
             bnd[I].buffer_type = MYSQL_TYPE_SHORT;
             bnd[I].buffer = const_cast<short *>(&item);
+            return 0;
+        }
+
+        int in_bind(MYSQL_BIND *bnd, unsigned short const& item, size_t I)
+        {
+            bnd[I].buffer_type = MYSQL_TYPE_SHORT;
+            bnd[I].buffer = const_cast<unsigned short *>(&item);
             return 0;
         }
 
@@ -175,10 +189,24 @@ namespace sql
             return 0;
         }
 
+        int in_bind(MYSQL_BIND *bnd, unsigned int const& item, size_t I)
+        {
+            bnd[I].buffer_type = MYSQL_TYPE_LONG;
+            bnd[I].buffer = const_cast<unsigned int *>(&item);
+            return 0;
+        }
+
         int in_bind(MYSQL_BIND *bnd, long long const& item, size_t I)
         {
             bnd[I].buffer_type = MYSQL_TYPE_LONGLONG;
             bnd[I].buffer = const_cast<long long *>(&item);
+            return 0;
+        }
+
+        int in_bind(MYSQL_BIND *bnd, unsigned long long const& item, size_t I)
+        {
+            bnd[I].buffer_type = MYSQL_TYPE_LONGLONG;
+            bnd[I].buffer = const_cast<unsigned long long *>(&item);
             return 0;
         }
 
@@ -199,6 +227,14 @@ namespace sql
         int in_bind(MYSQL_BIND *bnd, std::string const& item, size_t I)
         {
             bnd[I].buffer_type = MYSQL_TYPE_STRING;
+            bnd[I].buffer = const_cast<char *>(item.data());
+            bnd[I].buffer_length = item.size();
+            return 0;
+        }
+
+        int in_bind(MYSQL_BIND *bnd, blob_t const& item, size_t I)
+        {
+            bnd[I].buffer_type = MYSQL_TYPE_BLOB;
             bnd[I].buffer = const_cast<char *>(item.data());
             bnd[I].buffer_length = item.size();
             return 0;
@@ -232,13 +268,13 @@ namespace sql
         void set_options()
         {
             my_bool value = 1;
-            mysql_options(_handler, MYSQL_OPT_RECONNECT, &value);
-            mysql_options(_handler, MYSQL_INIT_COMMAND, "SET autocommit=1");
+            mysql_options(_db, MYSQL_OPT_RECONNECT, &value);
+            mysql_options(_db, MYSQL_INIT_COMMAND, "SET autocommit=1");
         }
 
         void launch_connect(std::string const& conninfo)
         {
-            char value[NUM_CONNECT_PARAM][LEN_CONNECT_VALUE] = {};
+            char value[MYPARAM_NUMBER][MYPARAM_LENGTH] = {};
             int i = 0, j = 0;
 
             const char *info = conninfo.c_str();
@@ -260,7 +296,7 @@ namespace sql
             unsigned int timeout = 0;
             unsigned int port = 0;
 
-            for (i = 0; i < NUM_CONNECT_PARAM; i += 2)
+            for (i = 0; i < MYPARAM_NUMBER; i += 2)
             {
                 if (!strcmp("host", value[i]))
                     host = value[i + 1];
@@ -279,19 +315,87 @@ namespace sql
             }
 
             if (timeout > 0)
-                mysql_options(_handler, MYSQL_OPT_CONNECT_TIMEOUT, &timeout);
+                mysql_options(_db, MYSQL_OPT_CONNECT_TIMEOUT, &timeout);
 
             if (coding)
-                mysql_options(_handler, MYSQL_SET_CHARSET_NAME, coding);
+                mysql_options(_db, MYSQL_SET_CHARSET_NAME, coding);
 
-            if (mysql_real_connect(_handler, host, user, passwd, dbname, port, nullptr, 0))
+            if (mysql_real_connect(_db, host, user, passwd, dbname, port, nullptr, 0))
                 _connected = true;
         }
 
-        MYSQL *_handler = nullptr;
+        MYSQL *_db = nullptr;
         MYSQL_STMT *_stmt = nullptr;
         bool _connected = false;
-        enum { NUM_CONNECT_PARAM = 14, LEN_CONNECT_VALUE = 32 };
-    };
+        enum { MYPARAM_NUMBER = 14, MYPARAM_LENGTH = 32 };
 
+        class resultset
+        {
+        public:
+            explicit resultset(unsigned int size) : _array_size(size), _databind(size),
+                _nullbind(size, 0), _lengthbind(size, 0), _target(size, nullptr)
+            {
+                memset(&_databind[0], 0, sizeof(MYSQL_BIND) * size);
+            }
+
+            void set_bind(MYSQL_RES *meta_result)
+            {
+                auto fields = mysql_fetch_fields(meta_result);
+                unsigned int i = 0;
+                size_t alloc_size = 0;
+                for (i = 0; i < _array_size; ++i)
+                {
+                    ++alloc_size;
+                    alloc_size += fields[i].max_length;
+                }
+
+                _buffer.reserve(alloc_size);
+                _buffer_ptr = &_buffer[0];
+
+                for (i = 0; i < _array_size; ++i)
+                    set_field(&_databind[i], &fields[i], i);
+            }
+
+            MYSQL_BIND *get_bind()
+            {
+                return &_databind[0];
+            }
+
+            char **get_value()
+            {
+                for (unsigned int i = 0; i < _array_size; ++i)
+                {
+                    if (_nullbind[i])
+                        _target[i] = nullptr;
+                }
+                return &_target[0];
+            }
+
+            unsigned long *get_length()
+            {
+                return &_lengthbind[0];
+            }
+
+        private:
+            void set_field(MYSQL_BIND *param, MYSQL_FIELD *field, unsigned int i)
+            {
+                _target[i] = _buffer_ptr;
+                param->buffer_type = field->type == MYSQL_TYPE_BLOB ? MYSQL_TYPE_BLOB : MYSQL_TYPE_STRING;
+                param->buffer = _buffer_ptr;
+                param->buffer_length = field->max_length + 1;
+                param->length = &_lengthbind[i];
+                param->is_null = &_nullbind[i];
+                _buffer_ptr += param->buffer_length;
+            }
+
+            const unsigned int _array_size;
+            std::vector<MYSQL_BIND> _databind;
+            std::vector<my_bool> _nullbind;
+            std::vector<unsigned long> _lengthbind;
+            std::vector<char> _buffer;
+            std::vector<char *> _target;
+            char *_buffer_ptr;
+        };
+
+    };
 }

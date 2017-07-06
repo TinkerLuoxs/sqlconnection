@@ -2,12 +2,16 @@
 // Created by Luoxs on 2017-03-16
 //
 #pragma once
- 
-#define SQL_ENABLE_SQLITE
-#define SQL_ENABLE_MYSQL 
-#define SQL_ENABLE_PGSQL 
 
-// #define SQL_ENABLE_DEBUG
+#if !defined(SQL_ENABLE_SQLITE) && !defined(SQL_DISABLE_SQLITE)
+#define SQL_ENABLE_SQLITE
+#endif
+#if !defined(SQL_ENABLE_MYSQL) && !defined(SQL_DISABLE_MYSQL)
+#define SQL_ENABLE_MYSQL 
+#endif
+#if !defined(SQL_ENABLE_PGSQL) && !defined(SQL_DISABLE_PGSQL)
+#define SQL_ENABLE_PGSQL 
+#endif
 
 
 #include <string>
@@ -16,16 +20,16 @@
 #include <functional>
 
 #if defined(SQL_ENABLE_DEBUG)
-#define SQLDEBUG(info, ...) printf("[%s]"info, __func__, ##__VA_ARGS__)
+#define SQLDEBUG(info, ...) printf("[sql:%d] " info, __LINE__, ##__VA_ARGS__)
 #else
 #define SQLDEBUG(info, ...)
 #endif
 
 namespace sql
 {
-    typedef std::function<void(int, char **)> execute_handler;
+    typedef std::function<void(char **, unsigned long *)> execute_handler;
 
-    //struct blob { void *data; size_t size; };
+    typedef std::vector<char> blob_t;
 }
 
 #if defined(SQL_ENABLE_SQLITE)

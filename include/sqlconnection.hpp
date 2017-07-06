@@ -7,10 +7,6 @@
 
 namespace sql
 {
-    class db_sqlite;
-    class db_mysql;
-    class db_pgsql;
-
     // @模板参数Database 包括 db_sqlite、db_mysql、db_pgsql
     // 可以在sqlconfig.hpp文件中以宏的形式启用或关闭某个实例(减少库依赖)
     //
@@ -40,7 +36,7 @@ namespace sql
 
     // 3)函数 bool execute(std::string const& sql_str, execute_handler&& handler);
     // 3)说明 执行有返回结果的SQL语句如SELECT.成功返回true,每一行结果调用一次handler,否则false
-    // 3)    回调函数handler的前两个参数分别为列数(字段总数),字段值
+    // 3)    回调函数handler的前两个参数分别为字段值,字段大小
 
     // 4)函数 bool prepare(std::string const& pre_str);
     // 4)说明 创建一个SQL预备语句.成功返回true,否则false
@@ -53,7 +49,7 @@ namespace sql
 
     // 6)函数 template <typename... Arg> bool execute_prepared(execute_handler&& handler, Arg&... arg);
     // 6)说明 执行一次已创建好的SQL预备语句且返回结果集.成功返回true,否则false
-    // 6)    回调函数handler的前两个参数分别为列数(字段总数),字段值
+    // 6)    回调函数handler的前两个参数分别为字段值,字段大小
     // 6)    函数参数类型为c++基本类型,参数个数为prepare()创建时的通配符个数
 
     // 7)函数 bool finalize_prepared();

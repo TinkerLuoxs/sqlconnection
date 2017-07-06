@@ -5,81 +5,47 @@
 
 namespace sql
 {
-    void assign_t(const char *value, char& t)
+    template <typename T>
+    static std::enable_if_t<std::is_integral<T>::value> assign_t(T& t, const char *value, unsigned long)
     {
-        t = std::stoi(value);
+        char *end;
+        t = static_cast<T>(std::strtoll(value, &end, 10));
     }
 
-    void assign_t(const char *value, short& t)
+    template <typename T>
+    static std::enable_if_t<std::is_floating_point<T>::value> assign_t(T& t, const char *value, unsigned long)
     {
-        t = std::stoi(value);
+        char *end;
+        t = static_cast<T>(std::strtold(value, &end));
     }
 
-    void assign_t(const char *value, int& t)
-    {
-        t = std::stoi(value);
-    }
-
-    void assign_t(const char *value, long long& t)
-    {
-        t = std::stoll(value);
-    }
-
-    void assign_t(const char *value, unsigned char& t)
-    {
-        t = std::stoi(value);
-    }
-
-    void assign_t(const char *value, unsigned short& t)
-    {
-        t = std::stoi(value);
-    }
-
-    void assign_t(const char *value, unsigned int& t)
-    {
-        t = std::stoul(value);
-    }
-
-    void assign_t(const char *value, unsigned long long& t)
-    {
-        t = std::stoull(value);
-    }
-
-    void assign_t(const char *value, float& t)
-    {
-        t = std::stof(value);
-    }
-
-    void assign_t(const char *value, double& t)
-    {
-        t = std::stod(value);
-    }
-
-    void assign_t(const char *value, std::string& t)
+    static void assign_t(std::string& t, const char *value, unsigned long)
     {
         t = value;
     }
 
+    static void assign_t(blob_t& t, const char *value, unsigned long size)
+    {
+        t.reserve(size);
+        t.assign(value, value + size);
+    }
+
     template <size_t I>
-    void assign(char **value)
+    static void assign(char **, unsigned long *)
     {
     }
 
     template <size_t I, typename Arg, typename... Args>
-    void assign(char **value, Arg& arg, Args&... args)
+    static void assign(char **value, unsigned long *size, Arg& arg, Args&... args)
     {
-        if (value[I]) assign_t(value[I], arg);
+        if (value[I]) assign_t(arg, value[I], size[I]);
         else SQLDEBUG("field value[%zu] is null\n", I);
-        assign<I + 1>(value, args...);
+        assign<I + 1>(value, size, args...);
     }
 
     template <typename... Args>
-    void assign(int num_cols, char **val_cols, Args&... args)
+    static void assign(char **val_cols, unsigned long *size_cols, Args&... args)
     {
-        constexpr int num_args = sizeof...(args);
-        if (num_cols == num_args)
-            assign<0>(val_cols, args...);
-        else SQLDEBUG("num_cols[%d] != num_args[%d]\n", num_cols, num_args);
+        assign<0>(val_cols, size_cols, args...);
     }
-
 }
