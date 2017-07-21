@@ -10,9 +10,9 @@ namespace sql
     class db_sqlite
     {
     public:
-        explicit db_sqlite(std::string const& conninfo)
+        explicit db_sqlite(const char *conninfo)
         {
-            if (SQLITE_OK == sqlite3_open(conninfo.data(), &_db))
+            if (SQLITE_OK == sqlite3_open(conninfo, &_db))
                 _connected = true;
         }
 
@@ -26,17 +26,27 @@ namespace sql
             return _connected;
         }
 
-        bool execute(std::string const& sql_str)
+        bool execute(const char *sql_str)
         {
-            int result = sqlite3_exec(_db, sql_str.data(), nullptr, nullptr, nullptr);
+            int result = sqlite3_exec(_db, sql_str, nullptr, nullptr, nullptr);
             SQLDEBUG("%s\n", sqlite3_errmsg(_db));
             return SQLITE_OK == result;
         }
 
-        bool execute(std::string const& sql_str, execute_handler&& handler)
+        bool execute(const char *sql_str, size_t)
+        {
+            return execute(sql_str);
+        }
+
+        bool execute(const char *sql_str, execute_handler&& handler)
+        {
+            return execute(sql_str, strlen(sql_str), std::move(handler));
+        }
+
+        bool execute(const char *sql_str, size_t size, execute_handler&& handler)
         {
             sqlite3_stmt *stmt = nullptr;
-            sqlite3_prepare_v2(_db, sql_str.data(), sql_str.size(), &stmt, nullptr);
+            sqlite3_prepare_v2(_db, sql_str, size, &stmt, nullptr);
             bool result = fetch(stmt, std::move(handler));
             SQLDEBUG("%s\n", sqlite3_errmsg(_db));
             sqlite3_reset(stmt);
@@ -44,9 +54,14 @@ namespace sql
             return result;
         }
 
-        bool prepare(std::string const& pre_str)
+        bool prepare(const char *pre_str)
         {
-            int result = sqlite3_prepare_v2(_db, pre_str.data(), pre_str.size(), &_stmt, nullptr);
+            return prepare(pre_str, strlen(pre_str));
+        }
+
+        bool prepare(const char *pre_str, size_t size)
+        {
+            int result = sqlite3_prepare_v2(_db, pre_str, size, &_stmt, nullptr);
             SQLDEBUG("%s\n", sqlite3_errmsg(_db));
             return SQLITE_OK == result;
         }
@@ -149,7 +164,7 @@ namespace sql
 
         int bind_t(blob_t const& item, size_t I)
         {
-            return sqlite3_bind_blob(_stmt, I, item.data(), item.size(), SQLITE_STATIC);
+            return sqlite3_bind_blob(_stmt, I, item.data.get(), item.size, SQLITE_STATIC);
         }
 
         template<size_t I, typename Arg, typename... Args>

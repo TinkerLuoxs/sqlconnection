@@ -16,13 +16,13 @@ namespace sql
     //    "host=localhost port=5432 dbname=mydb connect_timeout=10"
     //    ¹Ø¼ü×ÖÓÐ host¡¢port¡¢user¡¢password¡¢dbname¡¢connect_timeout client_encoding
     template <typename Database>
-    auto create_shared_connection(std::string const& conninfo)
+    auto create_shared_connection(const char *conninfo)
     {
         return std::make_shared<Database>(conninfo);
     }
 
     template <typename Database>
-    auto create_unique_connection(std::string const& conninfo)
+    auto create_unique_connection(const char *conninfo)
     {
         return std::make_unique<Database>(conninfo);
     }

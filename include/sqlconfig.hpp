@@ -29,7 +29,11 @@ namespace sql
 {
     typedef std::function<void(char **, unsigned long *)> execute_handler;
 
-    typedef std::vector<char> blob_t;
+    struct blob_t
+    {
+        std::shared_ptr<char> data;
+        size_t size;
+    };
 }
 
 #if defined(SQL_ENABLE_SQLITE)

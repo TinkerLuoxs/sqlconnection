@@ -22,13 +22,12 @@ namespace sql
     class db_mysql
     {
     public:
-        explicit db_mysql(std::string const& conninfo)
+        explicit db_mysql(const char *conninfo)
         {
             if (++sql_use_count <= 1)
                 mysql_library_init(0, nullptr, nullptr);
 
             _db = mysql_init(nullptr);
-            set_options();
             launch_connect(conninfo);
         }
 
@@ -45,16 +44,26 @@ namespace sql
             return _connected;
         }
 
-        bool execute(std::string const& sql_str)
+        bool execute(const char *sql_str)
         {
-            bool result = !mysql_real_query(_db, sql_str.data(), sql_str.size());
+            return execute(sql_str, strlen(sql_str));
+        }
+
+        bool execute(const char *sql_str, size_t length)
+        {
+            bool result = !mysql_real_query(_db, sql_str, length);
             SQLDEBUG("%s\n", mysql_error(_db));
             return result;
         }
 
-        bool execute(std::string const& sql_str, execute_handler&& handler)
+        bool execute(const char *sql_str, execute_handler&& handler)
         {
-            if (!execute(sql_str))
+            return execute(sql_str, strlen(sql_str), std::move(handler));
+        }
+
+        bool execute(const char *sql_str, size_t size, execute_handler&& handler)
+        {
+            if (!execute(sql_str, size))
                 return false;
             auto result = mysql_store_result(_db);
             SQLDEBUG("%s\n", mysql_error(_db));
@@ -68,10 +77,15 @@ namespace sql
             return true;
         }
 
-        bool prepare(std::string const& pre_str)
+        bool prepare(const char *pre_str)
+        {
+            return prepare(pre_str, strlen(pre_str));
+        }
+
+        bool prepare(const char *pre_str, size_t size)
         {
             _stmt = mysql_stmt_init(_db);
-            return !mysql_stmt_prepare(_stmt, pre_str.data(), pre_str.size());
+            return !mysql_stmt_prepare(_stmt, pre_str, size);
         }
 
         bool execute_prepared()
@@ -235,8 +249,8 @@ namespace sql
         int in_bind(MYSQL_BIND *bnd, blob_t const& item, size_t I)
         {
             bnd[I].buffer_type = MYSQL_TYPE_BLOB;
-            bnd[I].buffer = const_cast<char *>(item.data());
-            bnd[I].buffer_length = item.size();
+            bnd[I].buffer = item.data.get();
+            bnd[I].buffer_length = item.size;
             return 0;
         }
 
@@ -265,69 +279,72 @@ namespace sql
             return num == mysql_stmt_param_count(_stmt);
         }
 
-        void set_options()
+        void launch_connect(const char *conninfo)
         {
-            my_bool value = 1;
-            mysql_options(_db, MYSQL_OPT_RECONNECT, &value);
-            mysql_options(_db, MYSQL_INIT_COMMAND, "SET autocommit=1");
-        }
-
-        void launch_connect(std::string const& conninfo)
-        {
-            char value[MYPARAM_NUMBER][MYPARAM_LENGTH] = {};
-            int i = 0, j = 0;
-
-            const char *info = conninfo.c_str();
-            while (*info)
+            enum
             {
-                switch (*info)
+                MY_HOST = 0,
+                MY_PORT,
+                MY_USER,
+                MY_PWD,
+                MY_DB,
+                MY_TM,
+                MY_CODE,
+                MY_MAX,
+                MYPARAM_NUMBER = MY_MAX * 2,
+            };
+            char value[MYPARAM_NUMBER][32] = {};
+            int i = 0, j = 0;
+            while (*conninfo && i < MYPARAM_NUMBER)
+            {
+                switch (*conninfo)
                 {
                 case '=': case ' ': ++i; j = 0; break;
-                default: value[i][j++] = *info; break;
+                default: value[i][j++] = *conninfo; break;
                 }
-                ++info;
+                ++conninfo;
             }
 
-            const char *host = nullptr;
-            const char *user = nullptr;
-            const char *passwd = nullptr;
-            const char *dbname = nullptr;
-            const char *coding = nullptr;
+            const char *infos[MY_MAX] = { 0 };
             unsigned int timeout = 0;
-            unsigned int port = 0;
+            unsigned short port = 0;
 
             for (i = 0; i < MYPARAM_NUMBER; i += 2)
             {
                 if (!strcmp("host", value[i]))
-                    host = value[i + 1];
+                    infos[MY_HOST] = value[i + 1];
                 else if (!strcmp("port", value[i]))
-                    port = std::stoi(value[i + 1]);
+                    port = atoi(value[i + 1]);
                 else if (!strcmp("user", value[i]))
-                    user = value[i + 1];
+                    infos[MY_USER] = value[i + 1];
                 else if (!strcmp("password", value[i]))
-                    passwd = value[i + 1];
+                    infos[MY_PWD] = value[i + 1];
                 else if (!strcmp("dbname", value[i]))
-                    dbname = value[i + 1];
+                    infos[MY_DB] = value[i + 1];
                 else if (!strcmp("connect_timeout", value[i]))
-                    timeout = std::stoi(value[i + 1]);
+                    timeout = atoi(value[i + 1]);
                 else if (!strcmp("client_encoding", value[i]))
-                    coding = value[i + 1];
+                    infos[MY_CODE] = value[i + 1];
             }
 
-            if (timeout > 0)
-                mysql_options(_db, MYSQL_OPT_CONNECT_TIMEOUT, &timeout);
+            timeout = timeout > 10 ? timeout : 10;
+            my_bool reconn = 1;
+            mysql_options(_db, MYSQL_OPT_RECONNECT, &reconn);
+            mysql_options(_db, MYSQL_INIT_COMMAND, "SET autocommit=1");            
+            mysql_options(_db, MYSQL_OPT_CONNECT_TIMEOUT, &timeout);
 
-            if (coding)
-                mysql_options(_db, MYSQL_SET_CHARSET_NAME, coding);
+            if (infos[MY_CODE])
+                mysql_options(_db, MYSQL_SET_CHARSET_NAME, infos[MY_CODE]);
 
-            if (mysql_real_connect(_db, host, user, passwd, dbname, port, nullptr, 0))
+            if (mysql_real_connect(_db, infos[MY_HOST], infos[MY_USER], infos[MY_PWD], infos[MY_DB], port, nullptr, 0))
                 _connected = true;
+            else
+                SQLDEBUG("MYSQL connect failure: %s\n", mysql_error(_db));
         }
 
         MYSQL *_db = nullptr;
         MYSQL_STMT *_stmt = nullptr;
         bool _connected = false;
-        enum { MYPARAM_NUMBER = 14, MYPARAM_LENGTH = 32 };
 
         class resultset
         {

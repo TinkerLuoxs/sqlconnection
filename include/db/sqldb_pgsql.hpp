@@ -10,9 +10,9 @@ namespace sql
     class db_pgsql
     {
     public:
-        explicit db_pgsql(std::string const& conninfo)
+        explicit db_pgsql(const char *conninfo)
         {
-            _db = PQconnectdb(conninfo.c_str());
+            _db = PQconnectdb(conninfo);
             if (CONNECTION_OK == PQstatus(_db))
                 _connected = true;
         }
@@ -27,32 +27,47 @@ namespace sql
             return _connected;
         }
 
-        bool execute(std::string const& sql_str)
+        bool execute(const char *sql_str)
         {
-            auto res = PQexec(_db, sql_str.data());
+            auto res = PQexec(_db, sql_str);
             SQLDEBUG("%s\n", PQresultErrorMessage(res));
             bool result = PGRES_COMMAND_OK == PQresultStatus(res);
             PQclear(res);
             return result;
         }
 
-        bool execute(std::string const& sql_str, execute_handler&& handler)
+        bool execute(const char *sql_str, size_t)
         {
-            auto res = PQexec(_db, sql_str.data());
+            return execute(sql_str);
+        }
+
+        bool execute(const char *sql_str, execute_handler&& handler)
+        {
+            auto res = PQexec(_db, sql_str);
             SQLDEBUG("%s\n", PQresultErrorMessage(res));
             bool result = fetch_result(std::move(handler), res);
             PQclear(res);
             return result;
         }
 
-        // SELECT * FROM mytable WHERE x = $1::bigint;
-        bool prepare(std::string const& pre_str)
+        bool execute(const char *sql_str, size_t, execute_handler&& handler)
         {
-            auto res = PQprepare(_db, "", pre_str.data(), 0, NULL);
+            return execute(sql_str, std::move(handler));
+        }
+
+        // SELECT * FROM mytable WHERE x = $1::bigint;
+        bool prepare(const char *pre_str)
+        {
+            auto res = PQprepare(_db, "", pre_str, 0, NULL);
             SQLDEBUG("%s\n", PQresultErrorMessage(res));
             bool result = PGRES_COMMAND_OK == PQresultStatus(res);
             PQclear(res);
             return result;
+        }
+
+        bool prepare(const char *pre_str, size_t)
+        {
+            return prepare(pre_str);
         }
 
         bool execute_prepared()
@@ -140,8 +155,8 @@ namespace sql
 
         int converts(BindParam *param, const blob_t& item, size_t I)
         {
-            param->value[I] = item.data();
-            param->lengths[I] = item.size();
+            param->values[I] = item.data.get();
+            param->lengths[I] = (int)item.size;
             param->formats[I] = 1;
             return 0;
         }

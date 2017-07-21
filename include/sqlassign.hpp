@@ -26,8 +26,9 @@ namespace sql
 
     static void assign_t(blob_t& t, const char *value, unsigned long size)
     {
-        t.reserve(size);
-        t.assign(value, value + size);
+        t.size = size;
+        t.data.reset(new char[size], std::default_delete<char[]>());
+        memcpy(t.data.get(), value, size);
     }
 
     template <size_t I>
