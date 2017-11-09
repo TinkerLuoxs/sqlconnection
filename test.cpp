@@ -1,7 +1,7 @@
 #include <iostream>
 #include <map>
-#include "sql/sqlconnection.hpp"
-#include "sql/sqlassign.hpp"
+#include "sqlconnection.hpp"
+#include "sqlassign.hpp"
 
 
 #define DB_SQLITE       1
@@ -28,15 +28,13 @@ struct t_city
 
 int main()
 {
+    /// create database connection
 #if TEST_DATABASE == DB_SQLITE
-    /// create sqlite connection
-    auto db_conn = sql::create_unique_connection<sql::db_sqlite>("e:\\database\\smarthome.db");
+    auto db_conn = sql::create_unique_connection<sql::db_sqlite>("e:\\database\\mydatabase.db");
 #elif TEST_DATABASE == DB_MYSQL
-    /// create mysql connection
     auto db_conn = sql::create_unique_connection<sql::db_mysql>(
         "host=192.168.0.152 port=3306 password=123456 user=root dbname=mysql client_encoding=GBK");
 #elif TEST_DATABASE == DB_POSTGRESQL
-    /// create pgsql connection
     auto db_conn = sql::create_unique_connection<sql::db_pgsql>(
         "host=192.168.0.123 port=5432 password=123456 user=postgres dbname=postgres");
 #endif
