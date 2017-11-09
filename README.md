@@ -3,7 +3,7 @@ sqlite、mysql、postgresql common connection library, header-only
 
 ## 说明
 
-封装数据库的底层接口，提供统一的c++调用方式，更为方便、灵活。调用例子见test.cpp.
+封装数据库的底层接口，提供统一的c++调用方式，更为方便、灵活并且跨平台。调用例子见test.cpp.
 
 ## 编译事项：
 1. 编译器需支持c++14
